@@ -42,3 +42,4 @@ install_manifset.txt
 CTestTestfile.cmake
 build
 bin
+clang+llvm
