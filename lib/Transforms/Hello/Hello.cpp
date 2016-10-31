@@ -28,43 +28,49 @@
 using namespace llvm;
 
 namespace {
-	// Collect all use-defs into a container
+	// initializer for basic block
+	BasicBlock &getBasicBlock(Function *f) {
+		return f->front();
+	}
+
+	// push instructions into a stack
 	void getUseDef(User *I, std::stack<Value *> &bucket, Function *f) {
 		for(User::op_iterator i = I->op_begin(), e = I->op_end(); i != e; ++i) {
 			Value *v = *i;
-			if (Instruction *w = dyn_cast<Instruction>(v)) {
+			if(Instruction *w = dyn_cast<Instruction>(v)) {
 				bucket.push(w);
 				getUseDef(w, bucket, f);
 			}
 		}
 	}
 
-	/// Emit all necessary dependencies for Instruction I
+	// emit dependencies on instruction
 	void handleDeps(IRBuilder<> &builder, Instruction &I) {
 		std::stack<Value *> bucket;
 		Function *f = I.getParent()->getParent();
 		getUseDef(&I, bucket, f);
+		// get the first value in the bucket and call it "last"
+		// use last in subsequent instruction calls
+		Value *last = dyn_cast<Value>(bucket.top());
+		bucket.pop();
 		while(bucket.size()) {
-			Value *v = bucket.top();
+			Instruction *v = dyn_cast<Instruction>(bucket.top());
 			bucket.pop();
-			// TODO
-			// invert it
-			// push inverted instruction onto end of new function
 			switch (v->getOpcode()) {
 				case Instruction::Add:
-					newInstruction = builder.CreateSub(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
+					last = builder.CreateSub(last, v->getOperand(1));
 					break;
 
 				case Instruction::Sub:
-					newInstruction = builder.CreateAdd(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
+					last = builder.CreateAdd(last, v->getOperand(1));
 					break;
 
 				case Instruction::Mul:
-					newInstruction = builder.CreateSDiv(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
+					last = builder.CreateSDiv(last, v->getOperand(1));
 					break;
 
-				case Instruction::Div:
-					newInstruction = builder.CreateMul(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
+				case Instruction::SDiv:
+					last = builder.CreateMul(last, v->getOperand(1));
 					break;
 
 				default:
@@ -76,9 +82,19 @@ namespace {
 }
 
 // Handles the reversal of the code
-struct GlobalInverter:
+class GlobalInverter :
 	public InstVisitor<GlobalInverter> {
-		IRBuilder<> &builder;
+		IRBuilder<> builder;
+
+		public:
+		Function *func;
+
+		GlobalInverter(Function *f)
+			: builder(&getBasicBlock(func))
+		{
+			func = f;
+		}
+
 		void visitStoreInst(StoreInst &SI) {
 			handleDeps(builder, SI);
 		}
@@ -91,14 +107,13 @@ struct Hello : public FunctionPass {
 
 	bool runOnFunction(Function &F) override {
 		if (F.getName() == "foo") {
-			GlobalInverter inverter;
+			GlobalInverter inverter(&F);
 			inverter.visit(F);
 			return true;
 		}
 		return false;
 	}
 };
-}
 
 char Hello::ID = 0;
 static RegisterPass<Hello> X("hello", "Hello World Pass");
