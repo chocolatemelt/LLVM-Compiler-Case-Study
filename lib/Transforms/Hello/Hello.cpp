@@ -11,6 +11,7 @@
 // in docs/WritingAnLLVMPass.html
 //
 //===----------------------------------------------------------------------===//
+#include <map>
 #include <stack>
 
 #include "llvm/ADT/Statistic.h"
@@ -57,13 +58,14 @@ class GlobalInverter :
 	public InstVisitor<GlobalInverter> {
 		IRBuilder<> builder;
 		std::stack<Value *> bucket;
+		std::map<Value *, Value *> oldToNew;
 
 		public:
-		Function *func;
+		Function *f;   // orig func
 
-		GlobalInverter(Function *f, BasicBlock *entry)
+		GlobalInverter(Function *func, BasicBlock *entry)
 			: builder(entry) {
-			func = f;
+			f = func;
 		}
 
 		void visitStoreInst(StoreInst &SI) {
