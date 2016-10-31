@@ -62,10 +62,29 @@ class GlobalInverter :
 
 		public:
 		Function *f;   // orig func
+		Function *inf; // inverted func
+		Function::arg_iterator fi, fe, gi, ge;
 
-		GlobalInverter(Function *func, BasicBlock *entry)
+		// lookup for old to new operands
+		Value *lookup(Value *k) {
+			if (isa<Constant>(k)) return k;
+			std::map<Value *, Value *>::iterator it;
+
+			it = oldToNew.find(k);
+			if (it == oldToNew.end()) return 0;
+
+			return it->second;
+		}
+
+
+		GlobalInverter(Function *func, Function *infunc, BasicBlock *entry)
 			: builder(entry) {
 			f = func;
+			inf = infunc;
+			for (fi = f->arg_begin(), fe = f->arg_end(), gi = inf->arg_begin(),
+					ge = inf->arg_end(); fi != fe; ++fi, ++gi) {
+				oldToNew[dyn_cast<Value>(fi)] = dyn_cast<Value>(gi);
+			}
 		}
 
 		void visitStoreInst(StoreInst &SI) {
@@ -83,24 +102,24 @@ class GlobalInverter :
 					bucket.pop();
 					switch (v->getOpcode()) {
 						case Instruction::Add:
-							last = builder.CreateSub(last, v->getOperand(1));
+							last = builder.CreateSub(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
 							break;
 
 						case Instruction::Sub:
-							last = builder.CreateAdd(last, v->getOperand(1));
+							last = builder.CreateAdd(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
 							break;
 
 						case Instruction::Mul:
-							last = builder.CreateSDiv(last, v->getOperand(1));
+							last = builder.CreateSDiv(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
 							break;
 
 						case Instruction::SDiv:
-							last = builder.CreateMul(last, v->getOperand(1));
+							last = builder.CreateMul(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
 							break;
 
-						case Instruction::Load:
-							last = builder.CreateLoad(dyn_cast<LoadInst>(v)->getPointerOperand());
-							break;
+/* 						case Instruction::Load: */
+/* 							last = builder.CreateLoad(dyn_cast<LoadInst>(v)->getPointerOperand()); */
+/* 							break; */
 
 						default:
 							break;
@@ -122,7 +141,7 @@ struct Hello : public FunctionPass {
 			auto foo_inverse = cast<Function>(
 					mod->getOrInsertFunction("foo_inverse", Type::getVoidTy(F.getContext()), NULL));
 			auto entry = BasicBlock::Create(foo_inverse->getContext(), "entry", foo_inverse);
-			GlobalInverter inverter(&F, entry);
+			GlobalInverter inverter(&F, foo_inverse, entry);
 			inverter.visit(F);
 			inverter.finalize();
 			return true;
