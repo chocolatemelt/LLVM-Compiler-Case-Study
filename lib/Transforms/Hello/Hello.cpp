@@ -89,11 +89,15 @@ class GlobalInverter :
 							break;
 
 						case Instruction::Mul:
-							last = builder.CreateSDiv(v->getOperand(0), v->getOperand(1));
+							last = builder.CreateSDiv(last, v->getOperand(1));
 							break;
 
 						case Instruction::SDiv:
-							last = builder.CreateMul(v->getOperand(0), v->getOperand(1));
+							last = builder.CreateMul(last, v->getOperand(1));
+							break;
+
+						case Instruction::Load:
+							last = builder.CreateLoad(dyn_cast<LoadInst>(v)->getPointerOperand());
 							break;
 
 						default:
