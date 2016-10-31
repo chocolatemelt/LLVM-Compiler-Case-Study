@@ -28,11 +28,6 @@
 using namespace llvm;
 
 namespace {
-	// initializer for basic block
-	BasicBlock &getBasicBlock(Function *f) {
-		return f->front();
-	}
-
 	// push instructions into a stack
 	void getUseDef(User *I, std::stack<Value *> &bucket, Function *f) {
 		for(User::op_iterator i = I->op_begin(), e = I->op_end(); i != e; ++i) {
@@ -45,38 +40,14 @@ namespace {
 	}
 
 	// emit dependencies on instruction
-	void handleDeps(IRBuilder<> &builder, Instruction &I) {
+	void handleDeps(IRBuilder<> &builder, std::stack<Value *> &instBucket, Instruction &I) {
 		std::stack<Value *> bucket;
 		Function *f = I.getParent()->getParent();
 		getUseDef(&I, bucket, f);
-		// get the first value in the bucket and call it "last"
-		// use last in subsequent instruction calls
-		Value *last = dyn_cast<Value>(bucket.top());
-		bucket.pop();
 		while(bucket.size()) {
-			Instruction *v = dyn_cast<Instruction>(bucket.top());
+			Value *v = bucket.top();
 			bucket.pop();
-			switch (v->getOpcode()) {
-				case Instruction::Add:
-					last = builder.CreateSub(last, v->getOperand(1));
-					break;
-
-				case Instruction::Sub:
-					last = builder.CreateAdd(last, v->getOperand(1));
-					break;
-
-				case Instruction::Mul:
-					last = builder.CreateSDiv(last, v->getOperand(1));
-					break;
-
-				case Instruction::SDiv:
-					last = builder.CreateMul(last, v->getOperand(1));
-					break;
-
-				default:
-					assert(0 && "visitBinaryOperator died");
-					break;
-			}
+			instBucket.push(v);
 		}
 	}
 }
@@ -85,18 +56,52 @@ namespace {
 class GlobalInverter :
 	public InstVisitor<GlobalInverter> {
 		IRBuilder<> builder;
+		std::stack<Value *> bucket;
 
 		public:
 		Function *func;
 
-		GlobalInverter(Function *f)
-			: builder(&getBasicBlock(func))
-		{
+		GlobalInverter(Function *f, BasicBlock *entry)
+			: builder(entry) {
 			func = f;
 		}
 
 		void visitStoreInst(StoreInst &SI) {
-			handleDeps(builder, SI);
+			handleDeps(builder, bucket, SI);
+		}
+
+		void finalize() {
+			// get the first value in the bucket and call it "last"
+			// use last in subsequent instruction calls
+			if(bucket.size()) {
+				auto last = bucket.top();
+				bucket.pop();
+				while(bucket.size()) {
+					Instruction *v = dyn_cast<Instruction>(bucket.top());
+					bucket.pop();
+					switch (v->getOpcode()) {
+						case Instruction::Add:
+							last = builder.CreateSub(last, v->getOperand(1));
+							break;
+
+						case Instruction::Sub:
+							last = builder.CreateAdd(last, v->getOperand(1));
+							break;
+
+						case Instruction::Mul:
+							last = builder.CreateSDiv(v->getOperand(0), v->getOperand(1));
+							break;
+
+						case Instruction::SDiv:
+							last = builder.CreateMul(v->getOperand(0), v->getOperand(1));
+							break;
+
+						default:
+							break;
+					}
+				}
+			}
+			builder.CreateRetVoid();
 		}
 	};
 
@@ -107,8 +112,13 @@ struct Hello : public FunctionPass {
 
 	bool runOnFunction(Function &F) override {
 		if (F.getName() == "foo") {
-			GlobalInverter inverter(&F);
+			auto mod = F.getEntryBlock().getModule();
+			auto foo_inverse = cast<Function>(
+					mod->getOrInsertFunction("foo_inverse", Type::getVoidTy(F.getContext()), NULL));
+			auto entry = BasicBlock::Create(foo_inverse->getContext(), "entry", foo_inverse);
+			GlobalInverter inverter(&F, entry);
 			inverter.visit(F);
+			inverter.finalize();
 			return true;
 		}
 		return false;
