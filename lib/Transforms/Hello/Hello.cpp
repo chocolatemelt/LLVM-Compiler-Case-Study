@@ -91,8 +91,30 @@ class GlobalInverter :
 			std::vector<Value *> ret;
 			std::set<Value *> ready;
 			// populate ready set with nodes with no incoming edges
-			for(int i = 0; i < bucket.size(); ++i) {
-				topoify(bucket[i], bucket, &ready);
+			for(auto const &d : bucket) {
+				topoify(d.first, bucket, &ready);
+			}
+			// now go through the ready set until it's empty
+			while(!ready.empty()) {
+				// remove an instruction, favoring stores first
+				Value *n = NULL;
+				for(auto const &r : ready) {
+					if(NULL != dyn_cast<StoreInst>(r)) {
+						n = r;
+						ready.erase(r);
+					}
+				}
+				if(NULL == n) {
+					n = *(ready.begin());
+					ready.erase(*(ready.begin()));
+				}
+				ret.push_back(n);
+				int sz = bucket[n].size() - 1;
+				for(int i = sz; i >= 0; ++i) {
+					Value *m = bucket[n][i];
+					bucket[n].pop_back();
+					topoify(m, bucket, &ready);
+				}
 			}
 			return ret;
 		}
