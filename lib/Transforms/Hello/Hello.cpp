@@ -12,7 +12,9 @@
 //
 //===----------------------------------------------------------------------===//
 #include <map>
+#include <set>
 #include <stack>
+#include <vector>
 
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/Function.h"
@@ -29,26 +31,11 @@
 using namespace llvm;
 
 namespace {
-	// push instructions into a stack
-	void getUseDef(User *I, std::stack<Value *> &bucket, Function *f) {
-		for(User::op_iterator i = I->op_begin(), e = I->op_end(); i != e; ++i) {
-			Value *v = *i;
-			if(Instruction *w = dyn_cast<Instruction>(v)) {
-				bucket.push(w);
-				getUseDef(w, bucket, f);
-			}
-		}
-	}
-
 	// emit dependencies on instruction
-	void handleDeps(IRBuilder<> &builder, std::stack<Value *> &instBucket, Instruction &I) {
-		std::stack<Value *> bucket;
-		Function *f = I.getParent()->getParent();
-		getUseDef(&I, bucket, f);
-		while(bucket.size()) {
-			Value *v = bucket.top();
-			bucket.pop();
-			instBucket.push(v);
+	void handleDeps(IRBuilder<> &builder, std::map<Value *, std::vector<Value *> > &deps, Instruction &I) {
+		Value *v = dyn_cast<Value>(I);
+		for(User::op_iterator i = I->op_begin(), e = I->op_end();  i != e; ++i) {
+			deps[v].push_back(*i);
 		}
 	}
 }
@@ -57,7 +44,7 @@ namespace {
 class GlobalInverter :
 	public InstVisitor<GlobalInverter> {
 		IRBuilder<> builder;
-		std::stack<Value *> bucket;
+		std::map<Value *, std::vector<Value *> > bucket;
 		std::map<Value *, Value *> oldToNew;
 
 		public:
@@ -91,41 +78,27 @@ class GlobalInverter :
 			handleDeps(builder, bucket, SI);
 		}
 
-		void finalize() {
-			// get the first value in the bucket and call it "last"
-			// use last in subsequent instruction calls
-			if(bucket.size()) {
-				auto last = bucket.top();
-				bucket.pop();
-				while(bucket.size()) {
-					Instruction *v = dyn_cast<Instruction>(bucket.top());
-					bucket.pop();
-					switch (v->getOpcode()) {
-						case Instruction::Add:
-							last = builder.CreateSub(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
-							break;
-
-						case Instruction::Sub:
-							last = builder.CreateAdd(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
-							break;
-
-						case Instruction::Mul:
-							last = builder.CreateSDiv(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
-							break;
-
-						case Instruction::SDiv:
-							last = builder.CreateMul(lookup(v->getOperand(0)), lookup(v->getOperand(1)));
-							break;
-
-/* 						case Instruction::Load: */
-/* 							last = builder.CreateLoad(dyn_cast<LoadInst>(v)->getPointerOperand()); */
-/* 							break; */
-
-						default:
-							break;
-					}
+		void topoify(Value *it, std::map<std::vector<Value *> > deps, std::set<Value *> ready) {
+			for(auto const &dep : deps) {
+				for(int j = 0; j < dep.second.size(); ++j) {
+					if(it == dep.second[j]) return;
 				}
 			}
+			ready.insert(it);
+		}
+
+		std::vector<Value *> topoSort(std::map<Value *, std::vector<Value *> > bucket) {
+			std::vector<Value *> ret;
+			std::set<Value *> ready;
+			// populate ready set with nodes with no incoming edges
+			for(int i = 0; i < bucket.size(); ++i) {
+				topoify(bucket[i], bucket, &ready);
+			}
+			return ret;
+		}
+
+		void finalize() {
+			topoSort(bucket);
 			builder.CreateRetVoid();
 		}
 	};
