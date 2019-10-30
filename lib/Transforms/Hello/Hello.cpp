@@ -33,8 +33,8 @@ using namespace llvm;
 namespace {
 	// emit dependencies on instruction
 	void handleDeps(IRBuilder<> &builder, std::map<Value *, std::vector<Value *> > &deps, Instruction &I) {
-		Value *v = dyn_cast<Value>(I);
-		for(User::op_iterator i = I->op_begin(), e = I->op_end();  i != e; ++i) {
+		Value *v = dyn_cast<Value>(&I);
+		for(User::op_iterator i = I.op_begin(), e = I.op_end();  i != e; ++i) {
 			deps[v].push_back(*i);
 		}
 	}
@@ -78,13 +78,13 @@ class GlobalInverter :
 			handleDeps(builder, bucket, SI);
 		}
 
-		void topoify(Value *it, std::map<std::vector<Value *> > deps, std::set<Value *> ready) {
+		void topoify(Value *it, std::map<Value *,std::vector<Value *> > deps, std::set<Value *> *ready) {
 			for(auto const &dep : deps) {
-				for(int j = 0; j < dep.second.size(); ++j) {
+				for(unsigned int j = 0; j < dep.second.size(); ++j) {
 					if(it == dep.second[j]) return;
 				}
 			}
-			ready.insert(it);
+			ready->insert(it);
 		}
 
 		std::vector<Value *> topoSort(std::map<Value *, std::vector<Value *> > bucket) {
@@ -120,12 +120,15 @@ class GlobalInverter :
 		}
 
 		void finalize() {
-			topoSort(bucket);
+			std::vector<Value *> instructions = topoSort(bucket);
+			for(unsigned int i = 0; i < instructions.size(); ++i) {
+				builder.Insert(dyn_cast<Instruction>(instructions[i]));
+			}
 			builder.CreateRetVoid();
 		}
 	};
 
-// Driver, runs the reverser pass, and then constructs the inverse function
+// Driver, runs the pass, and then constructs the function
 struct Hello : public FunctionPass {
 	static char ID;
 	Hello() : FunctionPass(ID) {}
